@@ -1,0 +1,58 @@
+---
+description: Code writing, refactoring, code reviews, naming conventions, Python/FastAPI coding standards, and development best practices
+globs: 
+alwaysApply: false
+---
+# Spring Boot Fast Development Conventions
+
+**Principle: Prioritize speed and directness while maintaining system coherence**
+
+## **Core Approach**
+- Choose the most direct solution that solves the actual problem.
+- Focus on working functionality first, extensive refactoring later.
+- Address root causes, not just symptoms (e.g., don't just catch and log exceptions).
+- Consider system integration when making changes.
+
+## **Code Standards**
+- Follow standard Java code conventions for readability.
+- Use Lombok (`@Data`, `@RequiredArgsConstructor`, `@Builder`) to reduce boilerplate.
+- Write clear, simple code over complex, abstract patterns.
+
+## **Data Models (DTOs & Entities)**
+- Use `record` for immutable API request/response DTOs with essential Bean Validation (`@NotEmpty`, `@Size`, etc.).
+- Use JPA `@Entity` classes for database models with necessary fields only.
+- Add `@OneToMany`, `@ManyToOne` relationships only when a query actually requires them. Start without them if possible.
+
+## **Architecture**
+- **Controllers**: Keep controllers thin. They should only handle HTTP request/response conversion and delegate to services.
+- **Services**: Implement business logic directly in `@Service` classes. Avoid creating service interfaces (`UserService`) for initial simplicity unless multiple implementations are immediately needed.
+- **Repositories**: Start by using `JpaRepository` directly. Create custom repository methods with `@Query` only for complex queries that cannot be expressed with query methods.
+- **Error Handling**: For simple cases, return `ResponseEntity.badRequest().body("Error message")` directly from the controller. Add a simple `@RestControllerAdvice` only when error handling logic becomes repetitive.
+
+## **Database**
+- Use Spring Data JPA and `JpaRepository` for data access.
+- Keep database configuration in `application.yml` simple.
+- Use the default methods from `JpaRepository` (e.g., `findById`, `save`, `deleteById`) as much as possible.
+
+## **API Routes**
+- Use `@RestController` with clear `@RequestMapping`, `@GetMapping`, `@PostMapping` definitions.
+- Handle errors directly with appropriate HTTP status codes via `ResponseEntity`.
+- Focus on core endpoint functionality.
+
+## **Testing**
+- Write simple `@SpringBootTest` integration tests for core API flows.
+- Use `JUnit 5` and `Mockito` for unit tests when complex logic needs to be isolated.
+
+## **Security**
+- Validate all API inputs using Bean Validation annotations in DTOs.
+- Use `application.yml` for configuration and environment variables for secrets.
+- Log errors without exposing sensitive data.
+
+## **When to Add Complexity (Refactoring Triggers)**
+Add abstractions or more complex patterns only when:
+- A service's logic becomes too large and needs to be split (triggering SRP).
+- Repetitive data access logic justifies a custom repository implementation.
+- You need to support multiple database types or ORMs.
+- Testing a specific piece of logic becomes difficult without mocking (triggering interface creation).
+
+**Start simple, add complexity only when the system demands it.**

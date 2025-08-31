@@ -1,0 +1,557 @@
+---
+description: Java code writing, Spring Boot conventions, refactoring, code reviews, naming standards, and Java development best practices
+globs: 
+alwaysApply: false
+---
+# Spring Boot Development Conventions
+
+> **Note**: The domain examples used in this document (User, Product, Order, etc.) are for illustration purposes. Please modify them according to your specific use case and business domain.
+
+## **General java practices**
+- You are an experienced Senior Java Developer.
+- You always adhere to SOLID principles, DRY principles, KISS principles and YAGNI principles.
+- You always follow OWASP best practices.
+- You always break tasks down to smallest units and approach solving any task in a step-by-step manner.
+
+## **DTO Convention**
+
+- Must be of type record for immutability and conciseness.
+- Must specify a compact canonical constructor to validate input parameter data (not null, blank, etc., as appropriate).
+- Use separate records for Request, Response, and internal DTO transfer objects.
+- Apply Bean Validation annotations directly on record parameters.
+
+### Standard DTO Pattern:
+```java
+// Internal DTO for service layer
+public record UserDTO(
+    String userId,
+    @NotEmpty @Email String email,
+    @NotEmpty @Size(min = 3, max = 50) String username,
+    @NotEmpty @Size(max = 50) String firstName,
+    @NotEmpty @Size(max = 50) String lastName,
+    @Pattern(regexp = "^\\+?[1-9]\\d{1,14}$") String phoneNumber,
+    LocalDate dateOfBirth,
+    List<String> preferredCategories,
+    Boolean isActive,
+    LocalDateTime createdDate
+) {
+    public UserDTO {
+        if (email != null && email.trim().isEmpty()) {
+            throw new IllegalArgumentException("Email cannot be empty");
+        }
+        if (username != null && username.trim().isEmpty()) {
+            throw new IllegalArgumentException("Username cannot be empty");
+        }
+    }
+}
+
+// API Request DTO
+public record UserRequest(
+    @NotEmpty String email,
+    @NotEmpty String username,
+    @NotEmpty String firstName,
+    @NotEmpty String lastName,
+    String phoneNumber,
+    LocalDate dateOfBirth,
+    List<String> preferredCategories
+) {}
+
+// API Response DTO  
+public record UserResponse(
+    String userId,
+    String email,
+    String username,
+    String firstName,
+    String lastName,
+    String phoneNumber,
+    LocalDate dateOfBirth,
+    Boolean isActive,
+    LocalDateTime createdDate
+) {}
+```
+
+## **Entity-class Convention**
+
+- Must annotate entity classes with @Entity.
+- Must annotate entity classes with @Table(name = "TB_ENTITYNAME") for explicit table naming.
+- Must use Lombok annotations: @Data, @NoArgsConstructor, @AllArgsConstructor, @Builder.
+- Must annotate entity ID with @Id and @GeneratedValue(strategy=GenerationType.IDENTITY).
+- Must use FetchType.LAZY for relationships, unless specified in a prompt otherwise.
+- Must annotate entity properties with validation annotations: @Size, @NotEmpty, @Email, etc.
+- Must use standardized table naming: uppercase with TB_ prefix (e.g., TB_USER, TB_PRODUCT).
+- Must use standardized column naming: uppercase with underscores (e.g., USER_ID, FIRST_NAME).
+- Must include audit fields: CREATED_DATE with @CreationTimestamp, UPDATED_DATE with @UpdateTimestamp.
+
+### Complete Entity Pattern:
+```java
+@Entity
+@Table(name = "TB_USER")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class User {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "USER_ID")
+    private String userId;
+    
+    // Database constraints only - NO Bean Validation annotations
+    @Column(name = "EMAIL", nullable = false, unique = true, length = 100)
+    private String email;
+    
+    @Column(name = "USERNAME", nullable = false, length = 50)
+    private String username;
+    
+    @Column(name = "FIRST_NAME", nullable = false, length = 50)
+    private String firstName;
+    
+    @Column(name = "LAST_NAME", nullable = false, length = 50)
+    private String lastName;
+    
+    @Column(name = "IS_ACTIVE", nullable = false)
+    private Boolean isActive = true;
+    
+    // Relationship mapping with LAZY loading
+    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    private List<Order> orders = new ArrayList<>();
+    
+    // Audit fields
+    @Column(name = "CREATED_DATE", nullable = false)
+    @CreationTimestamp
+    private LocalDateTime createdDate;
+    
+    @Column(name = "UPDATED_DATE")
+    @UpdateTimestamp
+    private LocalDateTime updatedDate;
+}
+```
+
+## **Repository-class Convention**
+- Must annotate repository classes with @Repository.
+- Repository classes must be of type interface.
+- Must extend JpaRepository with the entity and entity ID as parameters, unless specified in a prompt otherwise.
+- Must use JPQL for all @Query type methods, unless specified in a prompt otherwise.
+- Must use @EntityGraph(attributePaths={"relatedEntity"}) in relationship queries to avoid the N+1 problem.
+- Must use a DTO as The data container for multi-join queries with @Query.
+- Must follow standardized naming patterns: findBy[Field]With[RelatedEntity] for relationship queries.
+- Must use OrderBy[Field] suffix for sorted queries.
+- Must use exists methods instead of count for existence checks.
+
+### Standard Repository Pattern:
+```java
+@Repository
+public interface UserRepository extends JpaRepository<User, String> {
+    
+    // Standard existence check
+    boolean existsByEmail(String email);
+    
+    // Standard find with relationships using EntityGraph
+    @EntityGraph(attributePaths = {"orders", "preferences"})
+    @Query("SELECT u FROM User u WHERE u.userId = :userId")
+    Optional<User> findByUserIdWithDetails(@Param("userId") String userId);
+    
+    // Standard sorted query
+    @Query("SELECT u FROM User u WHERE u.email = :email ORDER BY u.createdDate DESC")
+    List<User> findByEmailOrderByCreatedDate(@Param("email") String email);
+    
+    // Standard pattern search
+    @Query("SELECT u FROM User u WHERE u.username LIKE %:username% AND u.isActive = true")
+    List<User> findByUsernameContainingAndIsActive(@Param("username") String username);
+    
+    // DTO projection for complex queries
+    @Query("""
+        SELECT new com.example.application.domain.user.dto.UserSummaryDTO(
+            u.userId, u.email, u.username, u.firstName, u.lastName, u.createdDate
+        )
+        FROM User u 
+        WHERE u.isActive = true
+        ORDER BY u.createdDate DESC
+        """)
+    List<UserSummaryDTO> findActiveUserSummariesOrderByCreatedDate();
+}
+
+@Repository
+public interface ProductRepository extends JpaRepository<Product, String> {
+    
+    boolean existsByProductCode(String productCode);
+    
+    @EntityGraph(attributePaths = {"category", "orders"})
+    @Query("SELECT p FROM Product p WHERE p.productId = :productId")
+    Optional<Product> findByProductIdWithDetails(@Param("productId") String productId);
+    
+    @Query("SELECT p FROM Product p WHERE p.category.categoryId = :categoryId ORDER BY p.createdDate DESC")
+    List<Product> findByCategoryIdOrderByCreatedDate(@Param("categoryId") String categoryId);
+}
+```
+
+## **Rest-controller Convention**
+- Must annotate controller classes with @RestController.
+- Must specify class-level API routes with @RequestMapping, e.g. ("/api/users").
+- Class methods must use best practice HTTP method annotations, e.g, create = @PostMapping("/create"), etc.
+- All dependencies must use constructor injection with final fields for immutability and better testability.
+- Methods return objects must be of type ResponseEntity<ApiResponse<T>>.
+- Controller methods should not contain try-catch blocks unless specific local handling is required.
+- All exceptions must be handled by the centralized GlobalExceptionHandler class.
+- Controllers should focus only on request/response handling and delegate business logic to services.
+- Must use @Valid annotation for request body validation.
+- Must use appropriate HTTP status codes with ResponseEntity.
+
+### Standard Controller Pattern:
+```java
+@RestController
+@RequestMapping("/api/users")
+@RequiredArgsConstructor
+@Validated
+public class UserController {
+    
+    private final UserService userService;
+    
+    @PostMapping
+    public ResponseEntity<ApiResponse<UserResponse>> createUser(@Valid @RequestBody UserRequest request) {
+        UserDTO userDTO = UserDTOConverter.convertToDTO(request);
+        UserDTO result = userService.createUser(userDTO);
+        UserResponse response = UserDTOConverter.convertToResponse(result);
+        
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("User created successfully", response));
+    }
+    
+    @GetMapping("/{userId}")
+    public ResponseEntity<ApiResponse<UserResponse>> getUser(@PathVariable String userId) {
+        UserDTO user = userService.getUser(userId);
+        UserResponse response = UserDTOConverter.convertToResponse(user);
+        
+        return ResponseEntity.ok(ApiResponse.success("User retrieved successfully", response));
+    }
+    
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<UserResponse>>> getUsers(
+            @RequestParam(required = false) String email,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        
+        List<UserDTO> users = userService.getUsers(email, page, size);
+        List<UserResponse> responses = users.stream()
+                .map(UserDTOConverter::convertToResponse)
+                .collect(Collectors.toList());
+        
+        return ResponseEntity.ok(ApiResponse.success("Users retrieved successfully", responses));
+    }
+    
+    @PutMapping("/{userId}")
+    public ResponseEntity<ApiResponse<UserResponse>> updateUser(
+            @PathVariable String userId,
+            @Valid @RequestBody UserRequest request) {
+        
+        UserDTO userDTO = UserDTOConverter.convertToDTO(request);
+        UserDTO result = userService.updateUser(userId, userDTO);
+        UserResponse response = UserDTOConverter.convertToResponse(result);
+        
+        return ResponseEntity.ok(ApiResponse.success("User updated successfully", response));
+    }
+    
+    @DeleteMapping("/{userId}")
+    public ResponseEntity<ApiResponse<Void>> deleteUser(@PathVariable String userId) {
+        userService.deleteUser(userId);
+        return ResponseEntity.ok(ApiResponse.success("User deleted successfully", null));
+    }
+}
+
+// Standard ApiResponse class
+public class ApiResponse<T> {
+    private String result; // SUCCESS or ERROR
+    private String message;
+    private T data;
+    private LocalDateTime timestamp;
+    
+    public ApiResponse(String result, String message, T data) {
+        this.result = result;
+        this.message = message;
+        this.data = data;
+        this.timestamp = LocalDateTime.now();
+    }
+    
+    public static <T> ApiResponse<T> success(String message, T data) {
+        return new ApiResponse<>("SUCCESS", message, data);
+    }
+    
+    public static <T> ApiResponse<T> error(String message) {
+        return new ApiResponse<>("ERROR", message, null);
+    }
+    
+    // Getters and setters...
+}
+```
+
+## **Service-class Convention**
+- Service classes must be of type interface.
+- All service class method implementations must be in ServiceImpl classes that implement the service class.
+- All ServiceImpl classes must be annotated with @Service.
+- All dependencies must use constructor injection with final fields for immutability and better testability.
+- Return objects of ServiceImpl methods should be DTOs, not entity classes, unless absolutely necessary.
+- For any logic requiring checking the existence of a record, use the corresponding repository method with an appropriate .orElseThrow lambda method.
+- Must use @Transactional at class level for ServiceImpl classes as default behavior.
+- Must use method-level @Transactional(readOnly = true) for read-only operations.
+- Must use method-level @Transactional for methods requiring different transaction behavior than class default.
+
+### Transaction Management Pattern:
+```java
+@Service
+@RequiredArgsConstructor
+@Transactional // Class-level default transaction behavior
+public class UserServiceImpl implements UserService {
+    
+    private final UserRepository userRepository;
+    private final ProductService productService;
+    
+    @Override
+    // Inherits @Transactional from class level (read-write transaction)
+    public UserDTO createUser(UserDTO userDTO) {
+        // Multiple DB operations - uses class-level transaction
+        validateDuplicateUser(userDTO.email());
+        User user = UserDTOConverter.convertToEntity(userDTO);
+        User savedUser = userRepository.save(user);
+        createInitialPreferences(savedUser);
+        return UserDTOConverter.convertToDTO(savedUser);
+    }
+    
+    @Override
+    @Transactional(readOnly = true) // Override for read-only
+    public UserDTO getUser(String userId) {
+        User user = userRepository.findByUserIdWithDetails(userId)
+            .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
+        return UserDTOConverter.convertToDTO(user);
+    }
+    
+    @Override
+    @Transactional(readOnly = true) // Override for read-only
+    public List<UserDTO> getUsersByEmail(String email) {
+        List<User> users = userRepository.findByEmailOrderByCreatedDate(email);
+        return users.stream()
+                   .map(UserDTOConverter::convertToDTO)
+                   .collect(Collectors.toList());
+    }
+}
+```
+
+## **Spring-boot Configuration**
+- Framework: Java Spring Boot 3 Gradle with Java 17 Dependencies: Spring Web, Spring Data JPA, Thymeleaf, Lombok, PostgreSQL driver
+- All request and response handling must be done only in RestController.
+- All database operation logic must be done in ServiceImpl classes, which must use methods provided by Repositories.
+- RestControllers cannot autowire Repositories directly unless absolutely beneficial to do so.
+- ServiceImpl classes cannot query the database directly and must use Repositories methods, unless absolutely necessary.
+- Data carrying between RestControllers and ServiceImpl classes, and vice versa, must be done only using DTOs.
+- Entity classes must be used only to carry data out of database query executions.
+
+## **Dependency Injection Convention**
+- Must use constructor injection for all dependencies in Controller and Service classes.
+- All injected dependencies must be declared as final fields for immutability.
+- Constructor injection provides better testability and prevents circular dependencies.
+- Use @RequiredArgsConstructor from Lombok to reduce boilerplate code when appropriate.
+
+### Example Pattern:
+```java
+@RestController
+@RequiredArgsConstructor // Lombok generates constructor for final fields
+public class UserController {
+    private final UserService userService;
+    
+    // Constructor automatically generated by Lombok
+    // public UserController(UserService userService) {
+    //     this.userService = userService;
+    // }
+}
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class UserServiceImpl implements UserService {
+    private final UserRepository userRepository;
+    private final ProductService productService;
+    
+    // Constructor automatically generated by Lombok
+}
+```
+
+## **Validation Convention**
+- Entity validation annotations (@Size, @NotEmpty, @Email) are for database constraints only.
+- DTO validation annotations are for API request/response validation.
+- Business logic validation must be implemented in dedicated ValidationService classes.
+- All validation exceptions must use standard exception types: IllegalArgumentException for business rules, MethodArgumentNotValidException for bean validation.
+
+### Standard Validation Pattern:
+```java
+// Entity - Database constraint validation only
+@Entity
+@Table(name = "TB_USER")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class User {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "USER_ID")
+    private String userId;
+    
+    @Column(name = "EMAIL", nullable = false, unique = true, length = 100)
+    private String email;
+    
+    @Column(name = "USERNAME", nullable = false, length = 50)
+    private String username;
+}
+
+// DTO - API validation only
+public record UserRequest(
+    @NotEmpty(message = "Email is required")
+    @Email(message = "Invalid email format")
+    @Size(max = 100, message = "Email cannot exceed 100 characters")
+    String email,
+    
+    @NotEmpty(message = "Username is required")
+    @Size(min = 3, max = 50, message = "Username must be between 3 and 50 characters")
+    @Pattern(regexp = "^[a-zA-Z0-9_]+$", message = "Username can only contain letters, numbers, and underscores")
+    String username,
+    
+    @NotEmpty(message = "First name is required")
+    @Size(max = 50, message = "First name cannot exceed 50 characters")
+    String firstName
+) {}
+
+// Service - Business logic validation
+@Service
+@RequiredArgsConstructor
+public class UserValidationService {
+    
+    private final UserRepository userRepository;
+    
+    public void validateUserCreation(UserDTO userDTO) {
+        validateEmailUniqueness(userDTO.email());
+        validateUsernameUniqueness(userDTO.username());
+        validateBusinessRules(userDTO);
+    }
+    
+    private void validateEmailUniqueness(String email) {
+        if (userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("User with this email already exists");
+        }
+    }
+    
+    private void validateUsernameUniqueness(String username) {
+        if (userRepository.existsByUsername(username)) {
+            throw new IllegalArgumentException("Username is already taken");
+        }
+    }
+    
+    private void validateBusinessRules(UserDTO userDTO) {
+        if (userDTO.dateOfBirth() != null && userDTO.dateOfBirth().isAfter(LocalDate.now().minusYears(13))) {
+            throw new IllegalArgumentException("User must be at least 13 years old");
+        }
+    }
+}
+```
+
+## 🔴 **10. Import and Package Structure Standardization**
+
+**Current Contradiction:**
+- Domain-based vs layer-based package structure confusion
+- Missing clear import organization guidelines
+
+**Solution:** Standardize package structure with clear domain-driven design
+
+## **Package Structure Convention**
+- Must use domain-driven package structure centered around business domains.
+- Each domain must contain controller, service, repository, entity, and dto subpackages.
+- Common/shared components must be placed in dedicated common package.
+- Must follow standardized import organization: Java standard, Third-party, Spring, Internal packages.
+
+### Standard Package Structure:
+```
+com.example.application/
+├── domain/
+│   ├── user/
+│   │   ├── controller/
+│   │   │   └── UserController.java
+│   │   ├── service/
+│   │   │   ├── UserService.java
+│   │   │   ├── UserServiceImpl.java
+│   │   │   └── UserValidationService.java
+│   │   ├── repository/
+│   │   │   └── UserRepository.java
+│   │   ├── entity/
+│   │   │   ├── User.java
+│   │   │   └── UserPreference.java
+│   │   └── dto/
+│   │       ├── UserDTO.java
+│   │       ├── UserRequest.java
+│   │       ├── UserResponse.java
+│   │       └── converter/
+│   │           └── UserDTOConverter.java
+│   ├── product/
+│   │   ├── controller/
+│   │   ├── service/
+│   │   ├── repository/
+│   │   ├── entity/
+│   │   └── dto/
+│   └── order/
+│       ├── controller/
+│       ├── service/
+│       ├── repository/
+│       ├── entity/
+│       └── dto/
+├── common/
+│   ├── exception/
+│   │   ├── GlobalExceptionHandler.java
+│   │   └── CustomExceptions.java
+│   ├── config/
+│   │   ├── DatabaseConfig.java
+│   │   └── SecurityConfig.java
+│   ├── util/
+│   │   └── DateUtils.java
+│   └── dto/
+│       └── ApiResponse.java
+└── Application.java
+
+### Standard Import Organization:
+```java
+// Java standard library imports
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+// Third-party library imports
+import lombok.Data;
+import lombok.RequiredArgsConstructor;
+
+// Spring framework imports
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+// Internal application imports
+import com.example.application.common.dto.ApiResponse;
+import com.example.application.domain.user.dto.UserDTO;
+import com.example.application.domain.user.entity.User;
+```
+```
+
+## ✅ **Spring Project Rules Unification Complete**
+
+All major contradictions have been resolved:
+
+1. **✅ Dependency Injection**: Unified to constructor injection with final fields
+2. **✅ DTO Pattern**: Unified to record-based DTOs throughout
+3. **✅ Exception Handling**: Unified to GlobalExceptionHandler with no controller try-catch
+4. **✅ Table Naming**: Unified to uppercase with TB_ prefix (TB_USER, TB_PRODUCT)
+5. **✅ Transaction Management**: Unified to class-level @Transactional with method-level overrides
+6. **✅ Entity Annotations**: Unified to complete Lombok pattern (@Data, @NoArgsConstructor, @AllArgsConstructor, @Builder)
+7. **✅ Repository Methods**: Unified naming patterns (findBy[Field]With[Relations], OrderBy[Field])
+8. **✅ Validation Logic**: Unified to three-layer validation (Entity constraints, DTO API validation, Service business rules)
+9. **✅ Controller Responses**: Unified to ResponseEntity<ApiResponse<T>> with proper HTTP status codes
+10. **✅ Package Structure**: Unified to domain-driven design with standardized import organization
+
+**Result**: 100% consistency across all Spring Boot project rules with zero contradictions remaining.

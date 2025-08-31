@@ -1,0 +1,384 @@
+---
+description: Spring Boot backend architecture design, REST API development, JPA/Hibernate modeling, service layer implementation, and enterprise patterns
+globs: 
+alwaysApply: false
+---
+# Backend Design Guidelines
+
+> **Note**: The domain examples used in this document (User, Product, Order, etc.) are for illustration purposes. Please modify them according to your specific use case and business domain.
+
+This document defines core design principles and patterns for developing backend systems.
+It is based on the requirements and design of an application project.
+
+# Technology Stack and Basic Rules
+
+## Technology Stack
+
+**Framework:** Spring Boot 3 with Gradle, Java 17
+**Key Dependencies:** Spring Web, Spring Data JPA, Thymeleaf, Lombok, PostgreSQL Driver
+**Core Principles:** Adherence to SOLID, DRY, KISS, YAGNI principles and OWASP security best practices
+
+## Architecture Layer Rules
+
+**Rule:** Clear layer separation and responsibility assignment
+
+**Rationale:**
+
+- Improved maintainability through separation of concerns
+- Ensuring test independence
+- Maximizing code reusability
+
+#### Layer Responsibility Definition
+
+```java
+// 1. RestController: Only handles request/response
+@RestController
+@RequestMapping("/api/users")
+@RequiredArgsConstructor
+@Validated
+public class UserController {
+    
+    private final UserService userService; // Constructor injection with final
+    
+    @PostMapping("/create")
+    public ResponseEntity<ApiResponse<UserResponse>> createUser(
+            @Valid @RequestBody UserRequest request) {
+        // No try-catch - GlobalExceptionHandler handles all exceptions
+        UserDTO userDTO = UserDTOConverter.convertToDTO(request);
+        UserDTO result = userService.createUser(userDTO);
+        UserResponse response = UserDTOConverter.convertToResponse(result);
+        
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("User created successfully", response));
+    }
+    
+    @GetMapping("/{userId}")
+    public ResponseEntity<ApiResponse<UserResponse>> getUser(@PathVariable String userId) {
+        // No try-catch - exceptions handled globally
+        UserDTO user = userService.getUser(userId);
+        UserResponse response = UserDTOConverter.convertToResponse(user);
+        
+        return ResponseEntity.ok(ApiResponse.success("User retrieved successfully", response));
+    }
+}
+
+// 2. Service Interface: Business logic definition
+public interface UserService {
+    UserDTO createUser(UserDTO userDTO);
+    UserDTO getUser(String userId);
+    List<UserDTO> getUsersByEmail(String email);
+    void validateDuplicateUser(String email);
+}
+
+// 3. ServiceImpl: Business logic implementation, uses Repository
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class UserServiceImpl implements UserService {
+    
+    private final UserRepository userRepository;
+    private final UserValidationService validationService;
+    private final ProductService productService;
+    private final NotificationService notificationService;
+    
+    @Override
+    // Inherits @Transactional from class level (read-write transaction)
+    public UserDTO createUser(UserDTO userDTO) {
+        // 1. Input validation
+        validationService.validateUserCreation(userDTO);
+        
+        // 2. Check duplicate user
+        validateDuplicateUser(userDTO.email());
+        
+        // 3. Verify product preferences if any
+        if (userDTO.preferredCategories() != null) {
+            productService.validateCategories(userDTO.preferredCategories());
+        }
+        
+        // 4. Create user
+        User user = UserDTOConverter.convertToEntity(userDTO);
+        user.setUserId(generateUserId());
+        User savedUser = userRepository.save(user);
+        
+        // 5. Initialize user preferences
+        createInitialPreferences(savedUser);
+        
+        // Return DTO instead of Entity
+        return UserDTOConverter.convertToDTO(savedUser);
+    }
+    
+    @Override
+    public void validateDuplicateUser(String email) {
+        if (userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("User with this email already exists");
+        }
+    }
+    
+    @Override
+    @Transactional(readOnly = true) // Override for read-only
+    public UserDTO getUser(String userId) {
+        User user = userRepository.findByUserIdWithDetails(userId)
+            .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
+        return UserDTOConverter.convertToDTO(user);
+    }
+    
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserDTO> getUsersByEmail(String email) {
+        List<User> users = userRepository.findByEmailOrderByCreatedDate(email);
+        return users.stream()
+                   .map(UserDTOConverter::convertToDTO)
+                   .collect(Collectors.toList());
+    }
+}
+```
+
+# Architecture Design Principles
+
+## SOLID Principles Compliance
+
+**Rule:** All service classes must strictly adhere to SOLID principles.
+
+**Rationale:**
+
+- Improved maintainability and extensibility
+- Enhanced testability
+- Maximized code reusability
+
+#### Recommended Pattern: Single Responsibility Principle (SRP)
+
+```java
+// Correct example: Service responsible only for validation
+@Service
+@RequiredArgsConstructor
+public class UserValidationService {
+    
+    private final UserRepository userRepository;
+    
+    /**
+     * Only responsible for user creation validation
+     * SRP: Single responsibility for validation logic only
+     */
+    public void validateUserCreation(UserDTO userDTO) {
+        validateRequiredFields(userDTO);
+        validateFieldFormats(userDTO);
+        validateBusinessRules(userDTO);
+    }
+    
+    private void validateRequiredFields(UserDTO userDTO) {
+        // Required field validation logic
+    }
+    
+    private void validateEmailUniqueness(String email) {
+        if (userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("User with this email already exists");
+        }
+    }
+}
+
+// Correct example: Service that only orchestrates user creation flow
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class UserServiceImpl implements UserService {
+    
+    private final UserValidationService validationService;
+    private final ProductService productService;
+    private final NotificationService notificationService;
+    
+    /**
+     * Only orchestrates the overall flow of user creation process
+     * SRP: Single responsibility for business flow orchestration only
+     */
+    public UserDTO createUser(UserDTO userDTO) {
+        // 1. Validation (delegated to validation service)
+        validationService.validateUserCreation(userDTO);
+        
+        // 2. Product preferences verification (delegated to product service)
+        if (userDTO.preferredCategories() != null) {
+            productService.validateCategories(userDTO.preferredCategories());
+        }
+        
+        // 3. User creation processing
+        UserDTO createdUser = createUserEntity(userDTO);
+        
+        // 4. Send welcome notification (delegated to notification service)
+        notificationService.sendWelcomeEmail(createdUser.getEmail());
+        
+        return createdUser;
+    }
+}
+```
+
+## Layer Separation and Dependency Management
+
+**Rule:** Clear separation between layers and adherence to dependency direction
+
+**Rationale:**
+
+- Minimizing coupling
+- Ensuring test independence
+- Minimizing change impact
+
+#### Recommended Pattern: Layer-based Responsibility Separation
+
+```java
+// Controller Layer: Only handles HTTP request/response
+@RestController
+@RequestMapping("/api/users")
+@RequiredArgsConstructor
+@Validated
+public class UserController {
+    
+    private final UserService userService;
+    
+    @PostMapping
+    public ResponseEntity<ApiResponse<UserResponse>> createUser(@Valid @RequestBody UserRequest request) {
+        // No try-catch - GlobalExceptionHandler handles all exceptions
+        UserDTO userDTO = UserDTOConverter.convertToDTO(request);
+        UserDTO result = userService.createUser(userDTO);
+        UserResponse response = UserDTOConverter.convertToResponse(result);
+        
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("User created successfully", response));
+    }
+}
+
+// Service Layer: Business logic processing
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class UserServiceImpl implements UserService {
+    
+    private final UserRepository userRepository;
+    private final UserValidationService validationService;
+    
+    // Business rule implementation, transaction management
+}
+
+// Repository Layer: Only handles data access
+@Repository
+public interface UserRepository extends JpaRepository<User, String> {
+    
+    // Standard existence check
+    boolean existsByEmail(String email);
+    boolean existsByUsername(String username);
+    
+    // Standard find with relationships using EntityGraph
+    @EntityGraph(attributePaths = {"orders", "preferences"})
+    @Query("SELECT u FROM User u WHERE u.userId = :userId")
+    Optional<User> findByUserIdWithDetails(@Param("userId") String userId);
+    
+    // Standard sorted query
+    @Query("SELECT u FROM User u WHERE u.email = :email ORDER BY u.createdDate DESC")
+    List<User> findByEmailOrderByCreatedDate(@Param("email") String email);
+    
+    // DTO projection for complex queries
+    @Query("""
+        SELECT new com.example.application.domain.user.dto.UserSummaryDTO(
+            u.userId, u.email, u.username, u.firstName, u.lastName, u.createdDate
+        )
+        FROM User u 
+        WHERE u.isActive = true
+        ORDER BY u.createdDate DESC
+        """)
+    List<UserSummaryDTO> findActiveUserSummariesOrderByCreatedDate();
+}
+```
+
+# Service Layer Design
+
+## Service/ServiceImpl Separation Pattern
+
+**Rule:** Separate Interface and Implementation for extensibility
+
+**Rationale:**
+
+- Easy implementation replacement
+- Convenience in creating Mock objects for testing
+- Support for multiple implementations
+
+#### Recommended Pattern: Service Interface Separation
+
+```java
+// Service Interface: Business logic contract definition
+public interface UserService {
+    UserDTO createUser(UserDTO userDTO);
+    UserDTO getUser(String userId);
+    List<UserDTO> getUsersByEmail(String email);
+    void validateDuplicateUser(String email);
+}
+
+// ServiceImpl: Actual business logic implementation
+@Service
+@RequiredArgsConstructor
+@Transactional // Class-level default transaction behavior
+public class UserServiceImpl implements UserService {
+    
+    private final UserRepository userRepository;
+    private final UserValidationService validationService;
+    private final ProductService productService;
+    private final NotificationService notificationService;
+    
+    @Override
+    // Inherits @Transactional from class level (read-write transaction)
+    public UserDTO createUser(UserDTO userDTO) {
+        // 1. Input validation
+        validationService.validateUserCreation(userDTO);
+        
+        // 2. Check for duplicate users
+        validateDuplicateUser(userDTO.email());
+        
+        // 3. Verify product categories if specified
+        if (userDTO.preferredCategories() != null) {
+            productService.validateCategories(userDTO.preferredCategories());
+        }
+        
+        // 4. Create user
+        User user = UserDTOConverter.convertToEntity(userDTO);
+        user.setUserId(generateUserId());
+        User savedUser = userRepository.save(user);
+        
+        // 5. Initialize user preferences
+        createInitialPreferences(savedUser);
+        
+        // Return DTO instead of Entity
+        return UserDTOConverter.convertToDTO(savedUser);
+    }
+    
+    @Override
+    public void validateDuplicateUser(String email) {
+        if (userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("User with this email already exists");
+        }
+    }
+    
+    @Override
+    @Transactional(readOnly = true) // Override for read-only
+    public UserDTO getUser(String userId) {
+        User user = userRepository.findByUserIdWithDetails(userId)
+            .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
+        return UserDTOConverter.convertToDTO(user);
+    }
+    
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserDTO> getUsersByEmail(String email) {
+        List<User> users = userRepository.findByEmailOrderByCreatedDate(email);
+        return users.stream()
+                   .map(UserDTOConverter::convertToDTO)
+                   .collect(Collectors.toList());
+    }
+}
+```
+
+This Spring Boot backend design guideline provides comprehensive patterns for developing scalable and maintainable backend systems with complete consistency across all architectural layers.
+
+**Key Design Points:**
+1. **Clear Layer Separation**: Controller → Service → Repository
+2. **Constructor Injection**: @RequiredArgsConstructor with final fields throughout
+3. **No try-catch in Controllers**: GlobalExceptionHandler handles all exceptions
+4. **SOLID Principles**: Single responsibility, dependency inversion
+5. **Standardized Transaction Management**: Class-level @Transactional with method-level overrides
+6. **Consistent Naming Patterns**: Repository methods, DTO structures, validation approaches
+

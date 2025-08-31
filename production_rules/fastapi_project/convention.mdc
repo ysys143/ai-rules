@@ -1,0 +1,357 @@
+---
+description: Code writing, refactoring, code reviews, naming conventions, Python/FastAPI coding standards, and development best practices
+globs: 
+alwaysApply: false
+---
+# FastAPI Development Conventions
+
+> **Note**: The domain examples used in this document (Account, Customer, Product, etc.) are for illustration purposes. Please modify them according to your specific use case and business domain.
+
+## **General Python Practices**
+- You are an experienced Senior Python Developer.
+- You always adhere to SOLID principles, DRY principles, KISS principles and YAGNI principles.
+- You always follow OWASP best practices.
+- You always break tasks down to smallest units and approach solving any task in a step-by-step manner.
+- Follow PEP 8 style guide for Python code.
+- Use type hints for all function parameters and return values.
+- Use async/await for all database operations and I/O operations.
+
+## **DTO/Schema Convention**
+
+- Must use Pydantic BaseModel for all DTOs and request/response schemas.
+- Must implement field validation using Pydantic validators and Field constraints.
+- Must use immutable DTOs by setting `frozen=True` in model_config.
+- Must specify custom validators for business logic validation using `@field_validator` decorator.
+- Must use `Optional` type hints for nullable fields.
+
+```python
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import Optional
+from decimal import Decimal
+import re
+
+# Import custom exceptions
+from common.exceptions import ValidationException, DataNotFoundException
+
+class AccountDTO(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,  # Immutability guarantee (replaces allow_mutation=False in v2)
+        validate_assignment=True,
+        extra='forbid'
+    )
+    
+    account_no: Optional[str] = None
+    customer_no: str = Field(..., min_length=1, max_length=10)
+    product_code: str = Field(..., min_length=6, max_length=6)
+    identity_no: str = Field(..., min_length=13, max_length=13)
+    new_amount: Decimal = Field(..., ge=0)
+    
+    @field_validator('product_code')
+    @classmethod
+    def validate_product_code(cls, v):
+        if not v.isdigit() or len(v) != 6:
+            raise ValidationException("Product code must be exactly 6 digits")
+        return v
+
+    @field_validator('customer_no')
+    @classmethod
+    def validate_customer_no(cls, v):
+        if not re.match(r"^\d{10}$", v):
+            raise ValidationException("Customer number must be 10 digits")
+        return v
+    
+    @field_validator('identity_no')
+    @classmethod
+    def validate_identity_no(cls, v):
+        if not v.isdigit() or len(v) != 13:
+            raise ValidationException("Identity number must be 13 digits")
+        return v
+```
+
+## **Entity/Model Convention**
+
+- Must use SQLModel for all entity classes (combines SQLAlchemy and Pydantic).
+- Must annotate entity classes with `table=True` parameter.
+- Must use `Field(primary_key=True)` for primary key fields.
+- Must use `FetchType.LAZY` equivalent (lazy loading) for relationships using `Relationship`.
+- Must NOT implement business validation in entities - only database constraints.
+- Must use proper SQLAlchemy column types and constraints for data integrity.
+
+```python
+from sqlmodel import SQLModel, Field, Relationship
+from typing import Optional, List
+from datetime import datetime
+from decimal import Decimal
+from pydantic import ConfigDict
+
+class Account(SQLModel, table=True):
+    model_config = ConfigDict(
+        validate_assignment=True,
+        extra='forbid'
+    )
+    
+    __tablename__ = "tb_account"
+    
+    account_no: Optional[str] = Field(default=None, primary_key=True, max_length=11)
+    customer_no: str = Field(max_length=10, index=True)
+    product_code: str = Field(max_length=6, index=True)
+    identity_no: str = Field(max_length=13)
+    new_amount: Decimal = Field(decimal_places=0, ge=0)
+    
+    # Lazy loading relationships
+    customer: Optional["Customer"] = Relationship(back_populates="accounts")
+    transactions: List["AccountTransaction"] = Relationship(back_populates="account")
+    
+    created_date: datetime = Field(default_factory=datetime.now)
+    updated_date: Optional[datetime] = Field(default=None)
+    
+    # NO business validation in entity - only database constraints
+```
+
+## **Repository Convention**
+
+- Repository classes must be abstract base classes using `ABC`.
+- Must implement concrete repository classes that inherit from the abstract repository.
+- Must use dependency injection for repository instances.
+- Must use SQLAlchemy async sessions for all database operations.
+- Must use `selectinload` or `joinedload` for relationship queries to avoid N+1 problems.
+- Must use DTO projections for multi-join queries when appropriate.
+
+```python
+from abc import ABC, abstractmethod
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from typing import Optional, List
+
+class AccountRepository(ABC):
+    @abstractmethod
+    async def save(self, session: AsyncSession, account: Account) -> Account:
+        pass
+    
+    @abstractmethod
+    async def find_by_account_no_with_details(self, session: AsyncSession, account_no: str) -> Optional[Account]:
+        pass
+
+class AccountRepositoryImpl(AccountRepository):
+    async def save(self, session: AsyncSession, account: Account) -> Account:
+        session.add(account)
+        await session.flush()
+        await session.refresh(account)
+        return account
+    
+    async def find_by_account_no_with_details(self, session: AsyncSession, account_no: str) -> Optional[Account]:
+        # Using selectinload to avoid N+1 problem
+        stmt = (
+            select(Account)
+            .options(selectinload(Account.customer), selectinload(Account.transactions))
+            .where(Account.account_no == account_no)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+```
+
+## **Router Convention**
+
+- Must use FastAPI APIRouter for all route definitions.
+- Must specify router-level prefixes and tags using `APIRouter(prefix="/api/accounts", tags=["accounts"])`.
+- Must use appropriate HTTP method decorators: `@router.post()`, `@router.get()`, etc.
+- Must use dependency injection with `Depends()` for service dependencies.
+- Must return standardized `ApiResponse` objects for all endpoints.
+- Must implement proper error handling that delegates to global exception handlers.
+- Must use Pydantic models for request/response validation.
+
+```python
+from fastapi import APIRouter, Depends, HTTPException
+from typing import List
+
+router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+
+@router.post("/create", response_model=ApiResponse[AccountResponse])
+async def create_account(
+    request: AccountRequest,
+    account_service: AccountService = Depends(get_account_service)
+) -> ApiResponse[AccountResponse]:
+    # Only responsible for DTO conversion and service calls
+    account_dto = convert_to_dto(request)
+    result = await account_service.create_account(account_dto)
+    response = convert_to_response(result)
+    return ApiResponse.success("Account created successfully", response)
+
+@router.get("/{account_no}", response_model=ApiResponse[AccountResponse])
+async def get_account(
+    account_no: str,
+    account_service: AccountService = Depends(get_account_service)
+) -> ApiResponse[AccountResponse]:
+    # Let GlobalExceptionHandler handle all exceptions
+    account = await account_service.get_account(account_no)
+    response = convert_to_response(account)
+    return ApiResponse.success("Account retrieved successfully", response)
+```
+
+## **Service Convention**
+
+- Service classes must be abstract base classes using `ABC`.
+- All service implementations must be in separate classes that implement the service interface.
+- Must use dependency injection for all service dependencies.
+- Must return DTOs from service methods, not entity classes, unless absolutely necessary.
+- Must use async/await for all database operations.
+- Must implement proper transaction management using async context managers.
+- Must use repository methods for all database operations.
+- Must implement proper error handling with custom exceptions.
+
+```python
+from abc import ABC, abstractmethod
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class AccountService(ABC):
+    @abstractmethod
+    async def create_account(self, account_dto: AccountDTO) -> AccountDTO:
+        pass
+    
+    @abstractmethod
+    async def get_account(self, account_no: str) -> AccountDTO:
+        pass
+
+class AccountServiceImpl(AccountService):
+    def __init__(
+        self,
+        account_repository: AccountRepository,
+        customer_service: CustomerService,
+        validation_service: AccountValidationService
+    ):
+        self.account_repository = account_repository
+        self.customer_service = customer_service
+        self.validation_service = validation_service
+    
+    async def create_account(self, account_dto: AccountDTO) -> AccountDTO:
+        async with get_db_context() as session:
+            # Validation
+            await self.validation_service.validate_account_creation(account_dto)
+            
+            # Business logic
+            account = convert_to_entity(account_dto)
+            saved_account = await self.account_repository.save(session, account)
+            
+            # Transaction is automatically committed by context manager
+            return convert_to_dto(saved_account)
+    
+    async def get_account(self, account_no: str) -> AccountDTO:
+        async with get_db_context() as session:
+            account = await self.account_repository.find_by_account_no_with_details(session, account_no)
+            if not account:
+                raise DataNotFoundException(f"Account not found: {account_no}")
+            return convert_to_dto(account)
+```
+
+## **FastAPI Configuration**
+
+- Framework: Python FastAPI with SQLModel, Pydantic, asyncpg
+- Dependencies: FastAPI, SQLModel, Pydantic, asyncpg, pytest, uvicorn
+- All request and response handling must be done only in Routers.
+- All database operation logic must be done in Service implementations, which must use Repository methods.
+- Routers cannot use Repository classes directly unless absolutely beneficial.
+- Service implementations cannot query the database directly and must use Repository methods.
+- Data transfer between Routers and Services must be done using DTOs only.
+- Entity classes must be used only for database operations and ORM mapping.
+
+## **Dependency Injection Convention**
+
+- Must use FastAPI's dependency injection system with `Depends()`.
+- Must create dependency provider functions for services and repositories.
+- Service dependencies are injected into routers.
+- Database sessions must NOT be injected into routers; use `get_db_context()` in the service layer.
+
+```python
+from fastapi import Depends
+
+# Correct dependency injection for services
+def get_account_service() -> AccountService:
+    return AccountServiceImpl(
+        account_repository=get_account_repository(),
+        customer_service=get_customer_service(),
+        validation_service=get_account_validation_service()
+    )
+
+# Correct usage in router
+@router.post("/create")
+async def create_account(
+    request: AccountRequest,
+    account_service: AccountService = Depends(get_account_service)
+):
+    # Router calls service method, which handles its own DB session
+    await account_service.create_account(request)
+```
+
+## **Exception Handling Convention**
+
+- Must implement centralized exception handling using FastAPI exception handlers.
+- Must NOT use try-catch blocks in routers - let GlobalExceptionHandler process all exceptions.
+- Must define custom exception classes that inherit from base BusinessException.
+- Must return standardized error responses through exception handlers.
+
+```python
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from common.exceptions import BusinessException, ValidationException, DataNotFoundException, SecurityException
+
+class BusinessException(Exception):
+    """Base exception for all business logic errors"""
+    def __init__(self, message: str, error_code: str = "BUSINESS_ERROR"):
+        self.message = message
+        self.error_code = error_code
+        super().__init__(self.message)
+
+class ValidationException(BusinessException):
+    def __init__(self, message: str):
+        super().__init__(message, "VALIDATION_ERROR")
+
+class DataNotFoundException(BusinessException):
+    def __init__(self, message: str):
+        super().__init__(message, "DATA_NOT_FOUND")
+
+class SecurityException(BusinessException):
+    def __init__(self, message: str):
+        super().__init__(message, "SECURITY_ERROR")
+
+# Global exception handlers
+async def business_exception_handler(request: Request, exc: BusinessException):
+    return JSONResponse(
+        status_code=400,
+        content={
+            "result": "ERROR",
+            "message": exc.message,
+            "error_code": exc.error_code,
+            "data": None
+        }
+    )
+```
+
+## **Database Session Management Convention**
+
+- Must use `get_db_context()` for all service layer database operations with automatic transaction management.
+- Must NOT use dependency injection pattern `Depends(get_db_session)` in routers.
+- Must use async context manager pattern for transaction boundaries.
+- Repository methods must receive session as parameter, not inject it.
+
+```python
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from contextlib import asynccontextmanager
+
+# Database configuration
+async_engine = create_async_engine("postgresql+asyncpg://...")
+async_session = async_sessionmaker(async_engine, expire_on_commit=False)
+
+@asynccontextmanager
+async def get_db_context():
+    """
+    Context manager for database sessions with automatic transaction management.
+    Use this pattern in service layer for all database operations.
+    """
+    async with async_session() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
