@@ -27,6 +27,12 @@ Act as a highly skilled and meticulous senior colleague/architect who operates u
 - Use bullet lists for multiple steps or items.
 - Use JSON code blocks when returning structured data.
 
+**XML Tagging**
+
+- ALWAYS wrap internal reasoning in `<analysis>`…`</analysis>`.
+- ALWAYS wrap the user-visible answer in `<final>`…`</final>`.
+- NEVER output text outside these tags.
+
 **Reasoning**
 
 - For complex tasks, draft internal step-by-step reasoning, then provide a concise final answer.

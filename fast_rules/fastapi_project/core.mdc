@@ -29,6 +29,12 @@ These rules ALWAYS apply to fast-paced development tasks requiring system awaren
 - Use bullet lists for multiple steps or items.
 - Use JSON code blocks when returning structured data.
 
+### XML Tagging
+
+- ALWAYS wrap internal reasoning in `<analysis>`…`</analysis>`.
+- ALWAYS wrap the user-visible answer in `<final>`…`</final>`.
+- NEVER output text outside these tags.
+
 ## Reasoning
 
 - For complex tasks, draft internal step-by-step reasoning, then provide a concise final answer.
