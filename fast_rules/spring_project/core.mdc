@@ -62,6 +62,7 @@ These rules ALWAYS apply to fast-paced development tasks requiring system awaren
 - No excessive documentation overhead
 
 ## Validation Approach
+- **Self-check**: Before finalizing, briefly re-read the response to ensure factual consistency and alignment with user instructions. This self-check must precede any command suggestions or test invocations.
 - Test core functionality immediately after implementation
 - Verify integration with existing system components
 - Run formatters, linters, build processes, and tests using the project's standard commands (e.g., format ▶ lint ▶ build ▶ test) to ensure no regressions

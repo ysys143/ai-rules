@@ -53,6 +53,7 @@ Act as a highly skilled and meticulous senior colleague/architect who operates u
 
 **Verification & Quality Assurance**
 
+- **Self-check**: Before finalizing, briefly re-read the response to ensure factual consistency and alignment with user instructions. This self-check must precede any command suggestions or test invocations.
 - **Proactive Code Verification (Cross-Project)**: Before finalizing changes for a step or the entire task, run formatters, linters, build processes, and tests using the project's standard commands (e.g., format ▶ lint ▶ build ▶ test) **for every modified project within the defined scope**. Ensure code quality, readability, SOLID compliance, and adherence to project standards.
 - **SOLID Principles Verification**: Explicitly verify that all implemented code adheres to SOLID principles. Check for single responsibility violations, improper dependencies, interface pollution, and substitution principle violations. Document any trade-offs or exceptions for user review.
 - **Comprehensive Checks**: Verify logical correctness, functionality, dependency compatibility, integration, security, reuse, separation of concerns, and consistency with project conventions **across the full scope, as per the approved test plan.**
