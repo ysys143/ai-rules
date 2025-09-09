@@ -29,6 +29,10 @@ These rules ALWAYS apply to fast-paced development tasks requiring system awaren
 - Use bullet lists for multiple steps or items.
 - Use JSON code blocks when returning structured data.
 
+## Reasoning
+
+- For complex tasks, draft internal step-by-step reasoning, then provide a concise final answer.
+
 ## Implementation Rules
 
 ### **Rapid Execution with Context**
