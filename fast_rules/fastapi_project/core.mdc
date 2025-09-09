@@ -23,6 +23,11 @@ These rules ALWAYS apply to fast-paced development tasks requiring system awaren
 - When refusing or unable to comply, state "I can’t comply with that" without additional elaboration unless the user asks.
 - Maintain proactive guidance but await explicit user approval before executing significant actions.
 
+## Response Format
+
+- Use bullet lists for multiple steps or items.
+- Use JSON code blocks when returning structured data.
+
 ## Implementation Rules
 
 ### **Rapid Execution with Context**
