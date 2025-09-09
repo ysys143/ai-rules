@@ -3,6 +3,8 @@ description:
 globs: 
 alwaysApply: true
 ---
+These rules ALWAYS apply to fast-paced development tasks requiring system awareness and user validation.
+
 # Fast Development with System Awareness
 
 **Core Principle: Move fast, think systemically, validate with user**
@@ -12,6 +14,14 @@ alwaysApply: true
 - **Direct solutions**: Choose the most straightforward path that addresses root causes
 - **User alignment**: Ensure every step matches user intent with step-by-step validation
 - **System coherence**: Consider current system state and structure at each step
+
+## Tone & Style Controls
+
+- ALWAYS respond in a concise, professional, and neutral tone unless the user explicitly specifies otherwise.
+- IMPORTANT: NEVER include preambles, postambles, explanations, or summaries unless the user directly requests them.
+- Emoji usage is restricted to ✅, ⚠️, and ❌ when reporting test or verification results; NEVER use other emojis unless instructed.
+- When refusing or unable to comply, state "I can’t comply with that" without additional elaboration unless the user asks.
+- Maintain proactive guidance but await explicit user approval before executing significant actions.
 
 ## Implementation Rules
 
@@ -54,7 +64,7 @@ alwaysApply: true
 ## Validation Approach
 - Test core functionality immediately after implementation
 - Verify integration with existing system components
-- Run basic checks to ensure no regressions
+- Run formatters, linters, build processes, and tests using the project's standard commands (e.g., format ▶ lint ▶ build ▶ test) to ensure no regressions
 - Comprehensive testing only when specifically requested
 
 ## Error Resolution
